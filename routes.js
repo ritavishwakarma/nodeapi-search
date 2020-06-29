@@ -1,24 +1,28 @@
 var express = require('express');
 var router = express.Router();
 var elasticsearch = require('elasticsearch')
-var client = new elasticsearch.Client({
-    host: 'localhost:9200',
-    log: 'trace'
-})
-var workouts = [
-    {
-        id: 1,
-        type: 'weights',
-        durations: 45,
-        date: "2/3/2020"
-    },
-    {
-        id:2,
-        type: 'run',
-        duration: 30,
-        date: "3/4/2002"
-    }
-] 
+const mongoose     = require('mongoose');
+const mongoosastic = require('mongoosastic');
+
+mongoose.connect('mongodb://localhost:27017/mongodata', { useFindAndModify: false });
+
+var workoutsSchema = new mongoose.Schema({
+    type: String
+  , durations: Number
+  , date: String
+});
+
+workoutsSchema.plugin(mongoosastic, {
+    "host": "localhost",
+    "port": 9200
+    
+});
+var Newworkout = mongoose.model('Newworkout', workoutsSchema);
+
+Newworkout.createMapping((err, mapping) => {
+    console.log('mapping created');
+});
+
 
 router.use((req, res, next) => {
     console.log(req.method, req.url);
@@ -27,75 +31,108 @@ router.use((req, res, next) => {
 
 //get all workouts
 router.get('/workouts', (req, res) => {
-    return res.status(200).send({
-        message: 'get workouts call sucecceded',
-        workouts: workouts
-    });
-})
-
-//get specific workout by id
-router.get('/workouts/:id', (req, res) => {
-    let workout;
-    client.get({
-        index: 'workout',
-        type: 'mytype',
-        id: req.params.id
-    }, function( err, resp, status) {
-        if(err) {
-            console.log(err)
-        } else {
-            workout = resp._source;
-            console.log('Found the requested doc', resp);
-            if(!workout){
-                return res.status(400).send({
-                    message: `workout is not found for the id ${req.params.id}`
-                });
-            }
-            return res.status(200).send({
-                message: `Get workout call for the id ${req.params.id} succeed`,
-                workout: workout 
-            });
-        }
-    });  
-})
+    const workouts = Newworkout.find()
+    .then((workouts) => {
+        res.json({workouts: workouts})
+    })
+        .catch(err => console.log(err));
+    
+});
 
 //post workout
-router.post('/workout', (req, res) => {
-    if(!req.body.id){
-        return res.status(400).send({
-            message: 'id is required'
-        });
-    }
-    client.index({
-        index: 'workout',
-        type: 'mytype',
-        id: req.body.id,
-        body: req.body
-    }, function(err,resp,status){
-        if(err){
+router.post('/workouts', (req, res) => {
+    const workouts =  Newworkout(req.body)
+    workouts.save((err) => {
+        if(err) {
             console.log(err);
         }
-        else {
-            return res.status(200).send({
-            message:"post call suceceed"
-            })
-        }
-    
-    });  
-})
-
-//delete workout by id
-router.delete('/workout/:id', (req, res) => {
-    client.delete({
-        index: 'workout',
-        type: 'mytype',
-        id: req.params.id
+        console.log('user added in both the databases');
     })
-    .then(function(resp) {
-        console.log(resp);
-    }, function(err) {
-        console.trace(err.message);
+    
+    workouts.on('es-indexed', (err, result) => {
+        console.log('indexed to elastic search');
+    });
+});       
+
+//search-workout-by-id
+router.get('/workouts/:id', (req, res) => {
+    Newworkout.findById(req.params.id)
+    .then(workouts => {
+        if(!workouts) {
+            return res.status(404).send({
+                message: "workout not found with id " + req.params.id
+            });            
+        }
+        res.send(workouts);
+    }).catch(err => {
+        if(err.kind === 'ObjectId') {
+            return res.status(404).send({
+                message: "workout not found with id " + req.params.id
+            });                
+        }
+        return res.status(500).send({
+            message: "Something wrong retrieving product with id " + req.params.id
+        });
+    });
+
+});
+
+//update workout by id
+router.put('/workouts/:id', (req, res) => {
+    if(!req.body) {
+        return res.status(400).send({
+            message: "workout content can not be empty"
+        });
+    }
+    Newworkout.findByIdAndUpdate(req.params.id, {
+        type: req.body.type || "No workout type", 
+        durations: req.body.durations,
+        date: req.body.date,
+    }, {new: true})
+    .then(workouts => {
+        if(!workouts) {
+            return res.status(404).send({
+                message: "Workout not found with id " + req.params.id
+            });
+        }
+        res.send(workouts);
+    }).catch(err => {
+        if(err.kind === 'ObjectId') {
+            return res.status(404).send({
+                message: "Workout not found with id " + req.params.id
+            });                
+        }
+        return res.status(500).send({
+            message: "Something wrong updating note with id " + req.params.id
+        });
     });
     
-})
+});
+
+router.delete('workouts/:id', (req, res) => {
+    Newworkout.findByIdAndRemove(req.params.id)
+    .then(workouts => {
+        if(!workouts) {
+            return res.status(404).send({
+                message: "workout not found with id " + req.params.id
+            });
+        }
+        res.send({message: "workout deleted successfully!"});
+    }).catch(err => {
+        if(err.kind === 'ObjectId') {
+            return res.status(404).send({
+                message: "workout not found with id " + req.params.id
+            });                
+        }
+        return res.status(500).send({
+            message: "Could not delete workout with id " + req.params.id
+        });
+    });
+});
+
+  
+Newworkout.on('es-indexed', (err, result) => {
+    console.log('indexed to elastic search');
+});
+
 module.exports = router;
