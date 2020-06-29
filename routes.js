@@ -17,6 +17,7 @@ workoutsSchema.plugin(mongoosastic, {
     "port": 9200
     
 });
+
 var Newworkout = mongoose.model('Newworkout', workoutsSchema);
 
 Newworkout.createMapping((err, mapping) => {
@@ -109,7 +110,7 @@ router.put('/workouts/:id', (req, res) => {
     
 });
 
-router.delete('workouts/:id', (req, res) => {
+router.delete('/workouts/:id', (req, res) => {
     Newworkout.findByIdAndRemove(req.params.id)
     .then(workouts => {
         if(!workouts) {
